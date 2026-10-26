@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Réservation de tables</title>
+<style>
+  :root { --navy:#1F3A5F; --bg:#f4f6fa; --card:#fff; --text:#1c2430; --muted:#5b6678; --ok:#1a7f4b; --err:#b3261e; --line:#d9dfe8; }
+  @media (prefers-color-scheme: dark) {
+    :root { --navy:#8fb4e8; --bg:#12171f; --card:#1b222d; --text:#e8ecf2; --muted:#9aa5b5; --ok:#5fd394; --err:#ff8a80; --line:#2d3746; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, Arial, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; display:grid; gap:20px; }
+  h1 { color:var(--navy); margin:0; font-size:1.6rem; }
+  h2 { margin:0 0 12px; font-size:1.1rem; color:var(--navy); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  form { display:grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr)); gap:12px; }
+  label { display:grid; gap:4px; font-size:.85rem; color:var(--muted); }
+  input, select, button { font:inherit; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  button { background:var(--navy); color:var(--bg); border:0; cursor:pointer; font-weight:600; align-self:end; }
+  button.del { background:transparent; color:var(--err); border:1px solid var(--err); padding:4px 10px; }
+  #msg { min-height:1.3em; margin-top:10px; font-weight:600; }
+  .ok { color:var(--ok); } .err { color:var(--err); }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); font-size:.92rem; }
+  th { color:var(--muted); font-weight:600; }
+  .empty { color:var(--muted); padding:8px 0; }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Réservation de tables</h1>
+
+  <section class="card">
+    <h2>Nouvelle réservation</h2>
+    <form id="form">
+      <label>Nom<input name="client_name" required minlength="2" autocomplete="name"></label>
+      <label>Téléphone<input name="phone" required inputmode="tel" placeholder="+216 20 123 456" autocomplete="tel"></label>
+      <label>Personnes<input name="guests" type="number" min="1" max="8" value="2" required></label>
+      <label>Date<input name="date" type="date" required></label>
+      <label>Créneau<select name="slot" required></select></label>
+      <button type="submit">Réserver</button>
+    </form>
+    <div id="msg" role="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>Réservations du <span id="dayLabel"></span></h2>
+    <label style="max-width:220px;margin-bottom:10px">Afficher le jour<input id="viewDate" type="date"></label>
+    <div class="scroll"><table>
+      <thead><tr><th>Heure</th><th>Table</th><th>Nom</th><th>Pers.</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <div id="empty" class="empty" hidden>Aucune réservation ce jour-là.</div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const today = new Date().toISOString().slice(0, 10);
+const form = $('#form'), msg = $('#msg'), viewDate = $('#viewDate');
+
+function show(text, cls) { msg.textContent = text; msg.className = cls || ''; }
+
+async function loadSlots() {
+  const slots = await (await fetch('/api/slots')).json();
+  form.slot.innerHTML = slots.map(s => `<option>${s}</option>`).join('');
+}
+
+async function loadReservations() {
+  const date = viewDate.value || today;
+  $('#dayLabel').textContent = date;
+  const list = await (await fetch('/api/reservations?date=' + date)).json();
+  $('#rows').innerHTML = '';
+  list.forEach(r => {
+    const tr = document.createElement('tr');
+    // textContent évite l'injection de code (XSS) via le nom du client
+    [r.slot, r.table_name, r.client_name, r.guests].forEach(v => {
+      const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+    });
+    const td = document.createElement('td');
+    const b = document.createElement('button');
+    b.className = 'del'; b.textContent = 'Annuler';
+    b.onclick = async () => {
+      if (!confirm('Annuler cette réservation ?')) return;
+      await fetch('/api/reservations/' + r.id, { method: 'DELETE' });
+      loadReservations();
+    };
+    td.appendChild(b); tr.appendChild(td);
+    $('#rows').appendChild(tr);
+  });
+  $('#empty').hidden = list.length > 0;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(form));
+  data.guests = Number(data.guests);
+  const res = await fetch('/api/reservations', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+  });
+  const body = await res.json();
+  if (!res.ok) return show(body.error, 'err');
+  show(`Réservation confirmée : ${body.table}, le ${body.date} à ${body.slot}.`, 'ok');
+  viewDate.value = body.date;
+  loadReservations();
+});
+
+viewDate.addEventListener('change', loadReservations);
+form.date.min = today; form.date.value = today; viewDate.value = today;
+loadSlots().then(loadReservations);
+</script>
+</body>
+</html>
